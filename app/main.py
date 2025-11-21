@@ -5,7 +5,7 @@ import requests
 from fastapi import FastAPI
 from pydantic import BaseModel
 from supabase import create_client
-from caption_helper_api import CaptionHelperAPI
+from .caption_helper_api import CaptionHelperAPI
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
