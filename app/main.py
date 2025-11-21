@@ -7,8 +7,8 @@ from pydantic import BaseModel
 from supabase import create_client
 from .caption_helper_api import CaptionHelperAPI
 
-SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://oovuzvmetmprlqpbsrmo.supabase.co")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9vdnV6dm1ldG1wcmxxcGJzcm1vIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjMzNTI4NTIsImV4cCI6MjA3ODkyODg1Mn0.GlF9jsDn1s0MLY3VELds1TM7i5ij1bbHtKa3DkpsOOI")
 USE_LOCAL_MODEL = os.environ.get("USE_LOCAL_MODEL", "false").lower() == "true"
 
 # Initialize supabase client
