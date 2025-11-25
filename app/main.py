@@ -1,21 +1,20 @@
 # app/main.py
 import os
-import tempfile
 import requests
+import tempfile
 from fastapi import FastAPI
 from pydantic import BaseModel
 from supabase import create_client
 from .caption_helper_api import CaptionHelperAPI
 
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://oovuzvmetmprlqpbsrmo.supabase.co")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9vdnV6dm1ldG1wcmxxcGJzcm1vIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjMzNTI4NTIsImV4cCI6MjA3ODkyODg1Mn0.GlF9jsDn1s0MLY3VELds1TM7i5ij1bbHtKa3DkpsOOI")
-USE_LOCAL_MODEL = os.environ.get("USE_LOCAL_MODEL", "false").lower() == "true"
+# Load environment variables
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+HF_TOKEN = os.environ.get("HF_TOKEN")
 
-# Initialize supabase client
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-
-# Captions & embeddings via external APIs (Hugging Face / Replicate)
-caption_helper = CaptionHelperAPI()
+# Initialize services
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
+caption_helper = CaptionHelperAPI(hf_token=HF_TOKEN)
 
 app = FastAPI()
 
@@ -23,49 +22,61 @@ class Job(BaseModel):
     artwork_id: str
     storage_url: str
 
-
 @app.post("/process")
 async def process(job: Job):
+    print(f"Processing job for artwork: {job.artwork_id}")
+    print(f"Image URL/Path: {job.storage_url}")
 
-    # ---- 1. DOWNLOAD IMAGE FROM SUPABASE STORAGE ----
-    try:
-        img_response = requests.get(job.storage_url, timeout=30)
-        img_response.raise_for_status()
-    except Exception as e:
-        return {"status": "error", "msg": f"Failed to download image: {e}"}
-
-    # save temp file
-    with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as f:
-        f.write(img_response.content)
-        local_path = f.name
-
-    # ---- 2. GET IMAGE EMBEDDING ----
-    embedding = caption_helper.embed_image(local_path)
-
-    # ---- 3. GET IMAGE CAPTION ----
-    caption = caption_helper.describe_image(local_path)
-
-    # ---- 4. AUTO TAGGING ----
-    tags = caption_helper.extract_tags(caption)
-
-    # ---- 5. UPDATE SUPABASE ROW ----
-    update_payload = {
-        "auto_caption": caption,
-        "auto_tags": tags,
-        "metadata_done": True
-    }
-
-    if embedding is not None:
-        update_payload["clip_embedding"] = embedding
+    local_path = None
+    temp_file = None
 
     try:
-        supabase.table("artworks").update(update_payload).eq("id", job.artwork_id).execute()
-    except Exception as e:
-        return {"status": "error", "msg": f"Supabase update failed: {e}"}
+        # Download if URL
+        if job.storage_url.startswith("http"):
+            print("Downloading image from URL...")
+            resp = requests.get(job.storage_url, timeout=30)
+            resp.raise_for_status()
 
-    return {
-        "status": "ok",
-        "artwork_id": job.artwork_id,
-        "caption": caption,
-        "tags": tags
-    }
+            temp_file = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
+            temp_file.write(resp.content)
+            temp_file.close()
+
+            local_path = temp_file.name
+        else:
+            local_path = job.storage_url
+
+        print("Generating caption...")
+        caption = caption_helper.describe_image(local_path)
+
+        print("Extracting tags...")
+        tags = caption_helper.extract_tags(local_path)
+
+        # Embedding placeholder
+        embedding = caption_helper.embed_image(local_path)
+
+        # Update Supabase
+        if supabase:
+            update_payload = {
+                "auto_caption": caption,
+                "auto_tags": tags,
+                "metadata_done": True
+            }
+            if embedding:
+                update_payload["clip_embedding"] = embedding
+
+            supabase.table("artworks").update(update_payload).eq("id", job.artwork_id).execute()
+
+        return {
+            "status": "ok",
+            "artwork_id": job.artwork_id,
+            "caption": caption,
+            "tags": tags
+        }
+
+    except Exception as e:
+        print(f"Error: {e}")
+        return {"status": "error", "msg": str(e)}
+    
+    finally:
+        if temp_file and os.path.exists(temp_file.name):
+            os.unlink(temp_file.name)

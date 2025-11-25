@@ -1,80 +1,62 @@
 # app/caption_helper_api.py
-import os
 import requests
-import json
-
-HF_API_TOKEN = os.environ.get("HF_API_TOKEN")
-REPLICATE_TOKEN = os.environ.get("REPLICATE_TOKEN")
+import base64
+import os
 
 class CaptionHelperAPI:
+    def __init__(self, hf_token: str):
+        if not hf_token:
+            raise ValueError("HF_TOKEN is required")
+        
+        self.hf_token = hf_token
+        self.router_url = "https://router.huggingface.co/inference"
+        self.model = "Salesforce/blip-image-captioning-base"
 
-    def __init__(self):
-        self.hf_token = HF_API_TOKEN
-        self.replicate_token = REPLICATE_TOKEN
+    def describe_image(self, image_path: str):
+        payload = self._build_payload(image_path)
 
-    # --------------------------
-    # IMAGE CAPTIONING
-    # --------------------------
-    def describe_image(self, local_path: str) -> str:
-        # Use HuggingFace Inference API
-        if self.hf_token:
-            url = "https://api-inference.huggingface.co/models/llava-hf/llava-1.5-7b"  
-            headers = {"Authorization": f"Bearer {self.hf_token}"}
+        headers = {
+            "Authorization": f"Bearer {self.hf_token}",
+            "Content-Type": "application/json"
+        }
 
-            with open(local_path, "rb") as f:
-                data = f.read()
+        resp = requests.post(
+            self.router_url,
+            json={
+                "model": self.model,
+                "inputs": payload
+            },
+            headers=headers,
+            timeout=60
+        )
 
-            try:
-                res = requests.post(url, headers=headers, data=data, timeout=60)
-                if res.status_code == 200:
-                    j = res.json()
-                    # HF sometimes returns a list of dicts
-                    if isinstance(j, list) and "generated_text" in j[0]:
-                        return j[0]["generated_text"]
-                    return str(j)
-                else:
-                    return f"Inference error {res.status_code}"
-            except Exception as e:
-                return f"Caption error: {e}"
+        if resp.status_code != 200:
+            return f"Error {resp.status_code}: {resp.text}"
 
-        # fallback
-        return "No caption: HF token missing."
+        data = resp.json()
 
-    # --------------------------
-    # IMAGE EMBEDDINGS
-    # --------------------------
-    def embed_image(self, local_path: str):
-        if self.hf_token:
-            url = "https://api-inference.huggingface.co/pipeline/feature-extraction/openai/clip-vit-base-patch32"
-            headers = {"Authorization": f"Bearer {self.hf_token}"}
+        # Standard HF router response:
+        try:
+            return data[0]["generated_text"]
+        except:
+            return str(data)
 
-            with open(local_path, "rb") as f:
-                data = f.read()
+    def extract_tags(self, image_path: str):
+        caption = self.describe_image(image_path)
+        tags = [t.lower().strip() for t in caption.replace(".", "").split()]
+        return tags
 
-            try:
-                res = requests.post(url, headers=headers, data=data, timeout=60)
-                if res.status_code == 200:
-                    vect = res.json()
-                    # flatten (HF returns 2D sometimes)
-                    flat = []
-                    for row in vect:
-                        if isinstance(row, list):
-                            flat.extend(row)
-                        else:
-                            flat.append(row)
-                    return flat
-                return None
-            except Exception:
-                return None
-
+    def embed_image(self, image_path: str):
         return None
 
-    # --------------------------
-    # AUTO-TAGGING (simple)
-    # --------------------------
-    def extract_tags(self, caption: str):
-        if not caption:
-            return []
-        words = caption.lower().replace(",", " ").split()
-        tags = [w for w in words if len(w) > 3][:10]
-        return tags
+    def _build_payload(self, image_path: str):
+        # If URL
+        if image_path.startswith("http://") or image_path.startswith("https://"):
+            return {"image": image_path}
+
+        # Else local file
+        with open(image_path, "rb") as f:
+            img_bytes = f.read()
+
+        img_b64 = base64.b64encode(img_bytes).decode("utf-8")
+        return {"image": img_b64}
